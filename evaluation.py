@@ -8,7 +8,7 @@ model_eval_multitask to evaluate your model on the 3 tasks' dev sets.
 '''
 
 import torch
-from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
 from tqdm import tqdm
 import numpy as np
 
