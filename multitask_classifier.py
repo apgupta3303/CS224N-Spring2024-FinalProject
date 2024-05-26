@@ -81,7 +81,7 @@ class MultitaskBERT(nn.Module):
 
         self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
         self.paraphrase_linear = nn.Linear(BERT_HIDDEN_SIZE * 3, BERT_HIDDEN_SIZE)
-        self.paraphrase_out = nn.Linear(BERT_HIDDEN_SIZE, 2)
+        self.paraphrase_out = nn.Linear(BERT_HIDDEN_SIZE, 1)
 
         self.similar_dropout = nn.Dropout(config.hidden_dropout_prob)
         self.similar_linear = nn.Linear(BERT_HIDDEN_SIZE, BERT_HIDDEN_SIZE)
@@ -131,7 +131,7 @@ class MultitaskBERT(nn.Module):
         hidden_output1 = F.relu(self.paraphrase_linear(bert_concat))
         output = self.paraphrase_out(hidden_output1)
 
-        return output.argmax(dim=-1)
+        return output
 
 
         
@@ -177,7 +177,7 @@ class MultitaskBERT(nn.Module):
         # minimum=torch.min(cos_similarity)
         # cos_similarity -= minimum
         # cos_similarity/=torch.max(cos_similarity)
-        return cos_similarity * 5
+        return ((cos_similarity+1)/2) * 5
         
 
 
@@ -255,20 +255,21 @@ def train_multitask(args):
     model = model.to(device)
     
     lr = args.lr
-    base_optimizer = AdamW(model.parameters(), lr=lr)
-    optimizer = PCGrad(base_optimizer)
+    optimizer = AdamW(model.parameters(), lr=lr)
+    # optimizer = PCGrad(base_optimizer)
     best_dev_acc = 0
     losses = []
     # Run for the specified number of epochs.
-
+    
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
         num_batches = 0
+        iter = 0
         for sst_batch, para_batch, sts_batch in tqdm(zip(sst_train_dataloader, para_train_dataloader, sts_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE):
             sst_ids, sst_mask, sst_labels = (sst_batch['token_ids'],
                                        sst_batch['attention_mask'], sst_batch['labels'])
-
+            
             sst_ids = sst_ids.to(device)
             sst_mask = sst_mask.to(device)
             sst_labels = sst_labels.to(device)
@@ -278,7 +279,8 @@ def train_multitask(args):
             sst_logits = model.predict_sentiment(sst_ids, sst_mask)
             sentimentLoss = F.cross_entropy(sst_logits, sst_labels.view(-1), reduction='sum') / args.batch_size
             # sentimentLoss.backward()
-            # grads_sentiment = [param.grad.clone() for param in model.parameters()]
+            # optimizer.step()
+            #grads_sentiment = [param.grad.clone() for param in model.parameters()]
 
 
             para_ids1, para_mask1, para_ids2, para_mask2, para_labels = (para_batch['token_ids_1'],
@@ -290,10 +292,12 @@ def train_multitask(args):
             para_ids2 = para_ids2.to(device)
             para_mask2 = para_mask2.to(device)
             para_labels = para_labels.to(device)
+            # optimizer.zero_grad()
             para_logits = model.predict_paraphrase(para_ids1, para_mask1, para_ids2, para_mask2)
             # Change loss function
-            paraLoss = F.cross_entropy(para_logits.float(), para_labels.view(-1).float(), reduction='sum') / args.batch_size
+            paraLoss = F.binary_cross_entropy_with_logits(para_logits.squeeze(1), para_labels.view(-1).float(), reduction='sum') / args.batch_size
             # paraLoss.backward()
+            # optimizer.step()
             # grads_para = [param.grad.clone() for param in model.parameters()]
 
             sts_ids1, sts_mask1, sts_ids2, sts_mask2, sts_labels = (sts_batch['token_ids_1'],
@@ -305,35 +309,62 @@ def train_multitask(args):
             sts_ids2 = sts_ids2.to(device)
             sts_mask2 = sts_mask2.to(device)
             sts_labels = sts_labels.to(device)
+            # optimizer.zero_grad()
             sts_logits = model.predict_similarity(sts_ids1, sts_mask1, sts_ids2, sts_mask2)
             
 
             # Change loss function
             similarityLoss = F.cross_entropy(sts_logits.float(), sts_labels.view(-1).float(), reduction='sum') / args.batch_size
             # similarityLoss.backward()
+            # optimizer.step()
             # grads_sts = [param.grad.clone() for param in model.parameters()]
 
-
-            # grads_combined = [torch.stack([g1, g2, g3]) for g1, g2, g3 in zip(grads_sentiment, grads_para, grads_sts)]
+            # sentimentLoss.requires_grad = True
+            # paraLoss.requires_grad = True
+            # similarityLoss.requires_grad = True
+            #grads_combined = [torch.stack([g1, g2, g3]) for g1, g2, g3 in zip(grads_sentiment, grads_para, grads_sts)]
+            
+            x = torch.stack([sentimentLoss, paraLoss, similarityLoss])
+            
+            # print(x.shape)
+            # optimizer.pc_backward(x)
             # optimizer.pc_backward(grads_combined)
             # optimizer.step()
             # print(f"Sentiment Loss: {sentimentLoss.item()}")
             # print(f"Para Loss: {paraLoss.item()}")
             # print(f"Similarity Loss: {similarityLoss.item()}")
+            
             loss = sentimentLoss + paraLoss + similarityLoss
             loss.backward()
             optimizer.step()
+            
+            
 
+            # loss = sentimentLoss + paraLoss + similarityLoss
+            
             train_loss += loss.item()
             num_batches += 1
-    
+            iter += 1
+            # if iter % 10 == 0:
+              #  print(sentimentLoss.item(), paraLoss.item(), similarityLoss.item())
+              #  print(f'Cumulative: {train_loss} | Current: {loss.item()}')
         train_loss = train_loss / (num_batches)
         losses.append(train_loss)
 
-        sst_train_acc, para_train_acc, sts_train_corr, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        sst_dev_acc, para_dev_acc, sts_dev_corr, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
-        print(f'Dev accuracy: {dev_acc}')
-        print(f'Dev F1: {dev_f1}')
+        (sst_train_acc, sst_y_pred, sst_sent_ids,\
+                        para_train_acc, para_y_pred, para_sent_ids,\
+                                        sts_train_corr, sts_y_pred, sts_sent_ids) = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        (sst_dev_acc,sst_y_pred, sst_sent_ids,\
+                        para_dev_acc, para_y_pred, para_sent_ids,\
+                                        sts_dev_corr, sts_y_pred, sts_sent_ids) = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        
+    
+        # print(f'Dev accuracy: {dev_acc}')
+        # print(f'Dev F1: {dev_f1}')
+        # sst_dev_acc = float(sst_dev_acc)
+        # para_dev_acc = float(para_dev_acc)
+        # sts_dev_corr = float(sts_dev_corr)
+        # best_dev_acc = float(best_dev_acc)
 
         if sst_dev_acc + para_dev_acc + sts_dev_corr > best_dev_acc:
             best_dev_acc = sst_dev_acc + para_dev_acc + sts_dev_corr 
@@ -341,7 +372,7 @@ def train_multitask(args):
 
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, sentiment train acc :: {sst_train_acc :.3f}, sentiment dev acc :: {sst_dev_acc :.3f}")
     
-    plt.figure()
+    plt.figure(figsize=(14,4))
     plt.plot(losses, label='Training Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
@@ -478,7 +509,7 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f'{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask-gs.pt' # Save path.
+    args.filepath = f'{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train_multitask(args)
     test_multitask(args)
