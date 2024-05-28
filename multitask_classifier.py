@@ -266,7 +266,27 @@ def train_multitask(args):
         train_loss = 0
         num_batches = 0
         iter = 0
-        for sst_batch, para_batch, sts_batch in tqdm(zip(sst_train_dataloader, para_train_dataloader, sts_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE):
+        sst_iter = iter(sst_train_dataloader)
+        para_iter = iter(para_train_dataloader)
+        sts_iter = iter(sts_train_dataloader)
+
+        for _ in tqdm(range(max(len(sst_train_dataloader), len(para_train_dataloader), len(sts_train_dataloader))), desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            sst_batch = next(sst_iter, None)
+            if sst_batch is None:
+                sst_iter = iter(sst_train_dataloader)
+                sst_batch = next(sst_iter)
+
+            para_batch = next(para_iter, None)
+            if para_batch is None:
+                para_iter = iter(para_train_dataloader)
+                para_batch = next(para_iter)
+
+            sts_batch = next(sts_iter, None)
+            if sts_batch is None:
+                sts_iter = iter(sts_train_dataloader)
+                sts_batch = next(sts_iter)
+            
+            
             sst_ids, sst_mask, sst_labels = (sst_batch['token_ids'],
                                        sst_batch['attention_mask'], sst_batch['labels'])
             
@@ -343,74 +363,6 @@ def train_multitask(args):
             num_batches += 1
             iter += 1
 
-        # for sst_batch in tqdm(sst_train_dataloader, desc=f'train-sentiment-{epoch}', disable=TQDM_DISABLE):
-        #     sst_ids, sst_mask, sst_labels = (sst_batch['token_ids'],
-        #                                     sst_batch['attention_mask'], sst_batch['labels'])
-            
-        #     sst_ids = sst_ids.to(device)
-        #     sst_mask = sst_mask.to(device)
-        #     sst_labels = sst_labels.to(device)
-
-        #     optimizer.zero_grad()
-
-        #     sst_logits = model.predict_sentiment(sst_ids, sst_mask)
-        #     sentimentLoss = F.cross_entropy(sst_logits, sst_labels.view(-1), reduction='sum') / args.batch_size
-        #     sentimentLoss.backward()
-        #     optimizer.step()
-
-        #     train_loss += sentimentLoss.item()
-        #     num_batches += 1
-        #     iter += 1
-
-        # # Train on paraphrase detection batches
-        # for para_batch in tqdm(para_train_dataloader, desc=f'train-paraphrase-{epoch}', disable=TQDM_DISABLE):
-        #     para_ids1, para_mask1, para_ids2, para_mask2, para_labels = (para_batch['token_ids_1'],
-        #                                                                 para_batch['attention_mask_1'], para_batch['token_ids_2'],
-        #                                                                 para_batch['attention_mask_2'], para_batch['labels'])
-
-        #     para_ids1 = para_ids1.to(device)
-        #     para_mask1 = para_mask1.to(device)
-        #     para_ids2 = para_ids2.to(device)
-        #     para_mask2 = para_mask2.to(device)
-        #     para_labels = para_labels.to(device)
-
-        #     optimizer.zero_grad()
-        #     para_logits = model.predict_paraphrase(para_ids1, para_mask1, para_ids2, para_mask2)
-        #     paraLoss = F.binary_cross_entropy_with_logits(para_logits.squeeze(1), para_labels.view(-1).float(), reduction='sum') / args.batch_size
-        #     paraLoss.backward()
-        #     optimizer.step()
-
-        #     train_loss += paraLoss.item()
-        #     num_batches += 1
-        #     iter += 1
-
-        # # Train on similarity scoring batches
-        # for sts_batch in tqdm(sts_train_dataloader, desc=f'train-similarity-{epoch}', disable=TQDM_DISABLE):
-        #     sts_ids1, sts_mask1, sts_ids2, sts_mask2, sts_labels = (sts_batch['token_ids_1'],
-        #                                                             sts_batch['attention_mask_1'], sts_batch['token_ids_2'],
-        #                                                             sts_batch['attention_mask_2'], sts_batch['labels'])
-
-        #     sts_ids1 = sts_ids1.to(device)
-        #     sts_mask1 = sts_mask1.to(device)
-        #     sts_ids2 = sts_ids2.to(device)
-        #     sts_mask2 = sts_mask2.to(device)
-        #     sts_labels = sts_labels.to(device)
-
-        #     optimizer.zero_grad()
-        #     sts_logits = model.predict_similarity(sts_ids1, sts_mask1, sts_ids2, sts_mask2)
-        #     similarityLoss = F.cross_entropy(sts_logits.float(), sts_labels.view(-1).float(), reduction='sum') / args.batch_size
-        #     similarityLoss.backward()
-        #     optimizer.step()
-
-        #     train_loss += similarityLoss.item()
-        #     num_batches += 1
-        #     iter += 1
-                
-                
-
-            # if iter % 10 == 0:
-              #  print(sentimentLoss.item(), paraLoss.item(), similarityLoss.item())
-              #  print(f'Cumulative: {train_loss} | Current: {loss.item()}')
         train_loss = train_loss / (num_batches)
         losses.append(train_loss)
 
